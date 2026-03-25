@@ -21,8 +21,8 @@ vendor/
 # Go build cache
 cachedir/
 
-# Skill (nested git repo only)
-skill/ics-protocol-analyzer/
+# Skill
+skill/
 
 # Docs
 docs/Alibaba-Copaw-飞书-LLM智能问答系统探索.md
