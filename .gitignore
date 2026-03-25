@@ -21,6 +21,13 @@ vendor/
 # Go build cache
 cachedir/
 
+# Skill
+skill/
+
+# Docs
+docs/Alibaba-Copaw-飞书-LLM智能问答系统探索.md
+docs/莱钢日志存储方案说明.md
+
 # Logs
 logs/
 *.log
@@ -32,6 +39,8 @@ web/dist/
 # IDE
 .idea/
 .vscode/
+.qoder/
+.claude/
 *.swp
 *.swo
 *~
@@ -47,6 +56,3 @@ Thumbs.db
 # Temporary files
 tmp/
 temp/
-
-# pytest cache (skill directory)
-skill/**/.pytest_cache/
