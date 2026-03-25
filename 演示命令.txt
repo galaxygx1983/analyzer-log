@@ -1,0 +1,6 @@
+.\bin\generator-1.exe
+.\bin\generator-2.exe
+.\bin\file-collector.exe
+
+cd web
+npm start

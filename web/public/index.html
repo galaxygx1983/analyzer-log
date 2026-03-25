@@ -1,0 +1,537 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>边缘侧日志管理系统</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #1a1a2e; color: #eee; min-height: 100vh; }
+    
+    /* 导航 */
+    .nav { background: #16213e; padding: 12px 24px; display: flex; align-items: center; gap: 20px; border-bottom: 1px solid #0f3460; }
+    .nav h1 { font-size: 18px; color: #e94560; }
+    .nav-tabs { display: flex; gap: 4px; margin-left: auto; }
+    .nav-tab { padding: 8px 16px; background: transparent; border: none; color: #aaa; cursor: pointer; border-radius: 4px; }
+    .nav-tab:hover { background: #0f3460; }
+    .nav-tab.active { background: #e94560; color: white; }
+    
+    /* 主内容 */
+    .main { padding: 20px; max-width: 1400px; margin: 0 auto; }
+    
+    /* 统计卡片 */
+    .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 20px; }
+    .stat-card { background: #16213e; border-radius: 8px; padding: 16px; border: 1px solid #0f3460; }
+    .stat-card h3 { font-size: 12px; color: #888; margin-bottom: 8px; text-transform: uppercase; }
+    .stat-card .value { font-size: 28px; font-weight: bold; }
+    .stat-card.error .value { color: #e94560; }
+    .stat-card.warn .value { color: #f5a623; }
+    .stat-card.info .value { color: #4a9eff; }
+    
+    /* 过滤器 */
+    .filters { display: flex; gap: 12px; margin-bottom: 16px; flex-wrap: wrap; align-items: center; }
+    .filter-group { display: flex; align-items: center; gap: 8px; }
+    .filter-group label { font-size: 12px; color: #888; }
+    .filter-group select, .filter-group input { background: #16213e; border: 1px solid #0f3460; color: #eee; padding: 6px 12px; border-radius: 4px; }
+    
+    /* 日志表格 */
+    .log-table { width: 100%; border-collapse: collapse; background: #16213e; border-radius: 8px; overflow: hidden; }
+    .log-table th, .log-table td { padding: 10px 12px; text-align: left; border-bottom: 1px solid #0f3460; }
+    .log-table th { background: #0f3460; font-size: 12px; text-transform: uppercase; color: #888; }
+    .log-table tr:hover { background: #1f2b47; }
+    .log-table .time { font-family: monospace; font-size: 12px; color: #888; width: 180px; }
+    .log-table .level { font-weight: bold; width: 60px; text-align: center; }
+    .log-table .level-TRACE { color: #888; }
+    .log-table .level-DEBUG { color: #888; }
+    .log-table .level-INFO { color: #4a9eff; }
+    .log-table .level-WARN { color: #f5a623; }
+    .log-table .level-ERROR { color: #e94560; }
+    .log-table .level-FATAL { color: #ff4757; background: #ff475722; }
+    .log-table .service { color: #e94560; font-size: 13px; width: 150px; }
+    .log-table .message { font-size: 13px; max-width: 500px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .log-table .actions { width: 80px; }
+    
+    /* 分页 */
+    .pagination { display: flex; justify-content: center; gap: 8px; margin-top: 20px; }
+    .pagination button { background: #16213e; border: 1px solid #0f3460; color: #eee; padding: 8px 16px; border-radius: 4px; cursor: pointer; }
+    .pagination button:hover { background: #0f3460; }
+    .pagination button.active { background: #e94560; }
+    .pagination button:disabled { opacity: 0.5; cursor: not-allowed; }
+    
+    /* 实时流 */
+    .stream-container { background: #0d0d0d; border-radius: 8px; padding: 12px; height: 500px; overflow-y: auto; font-family: monospace; font-size: 12px; }
+    .stream-line { padding: 4px 0; border-bottom: 1px solid #222; }
+    .stream-line .time { color: #666; margin-right: 8px; }
+    .stream-line .level { margin-right: 8px; }
+    .stream-line.INFO { color: #4a9eff; }
+    .stream-line.WARN { color: #f5a623; }
+    .stream-line.ERROR { color: #e94560; }
+    
+    /* 分析面板 */
+    .analysis-panel { background: #16213e; border-radius: 8px; padding: 20px; }
+    .analysis-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px; }
+    .analysis-btn { padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-weight: bold; }
+    .analysis-btn.primary { background: #e94560; color: white; }
+    .analysis-btn.secondary { background: #0f3460; color: #eee; margin-left: 8px; }
+    
+    .match-list { margin-top: 16px; }
+    .match-item { background: #0f3460; border-radius: 4px; padding: 12px; margin-bottom: 8px; border-left: 3px solid; }
+    .match-item.critical { border-color: #e94560; }
+    .match-item.high { border-color: #f5a623; }
+    .match-item.medium { border-color: #4a9eff; }
+    .match-item h4 { font-size: 14px; margin-bottom: 4px; }
+    .match-item p { font-size: 12px; color: #888; }
+    .match-item .suggestion { margin-top: 8px; padding: 8px; background: #16213e; border-radius: 4px; font-size: 12px; }
+    
+    /* LLM 结果 */
+    .llm-result { background: #0f3460; border-radius: 8px; padding: 16px; margin-top: 16px; white-space: pre-wrap; line-height: 1.6; }
+    .llm-result h3 { margin-bottom: 12px; color: #e94560; }
+    
+    /* 日志详情模态框 */
+    .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; }
+    .modal.active { display: flex; justify-content: center; align-items: center; }
+    .modal-content { background: #16213e; border-radius: 8px; width: 80%; max-width: 800px; max-height: 80vh; overflow-y: auto; }
+    .modal-header { display: flex; justify-content: space-between; align-items: center; padding: 16px 20px; border-bottom: 1px solid #0f3460; }
+    .modal-header h2 { font-size: 16px; }
+    .modal-close { background: none; border: none; color: #888; font-size: 24px; cursor: pointer; }
+    .modal-body { padding: 20px; }
+    .detail-row { display: flex; margin-bottom: 12px; }
+    .detail-label { width: 100px; color: #888; font-size: 12px; }
+    .detail-value { flex: 1; font-family: monospace; font-size: 13px; }
+    .detail-json { background: #0d0d0d; padding: 12px; border-radius: 4px; overflow-x: auto; }
+    
+    /* 加载动画 */
+    .loading { text-align: center; padding: 40px; color: #888; }
+    .spinner { border: 3px solid #0f3460; border-top: 3px solid #e94560; border-radius: 50%; width: 30px; height: 30px; animation: spin 1s linear infinite; margin: 0 auto 12px; }
+    @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    
+    /* 标签页内容 */
+    .tab-content { display: none; }
+    .tab-content.active { display: block; }
+    
+    /* 历史记录 */
+    .history-item { background: #0f3460; border-radius: 8px; padding: 16px; margin-bottom: 12px; }
+    .history-item-header { display: flex; justify-content: space-between; margin-bottom: 8px; }
+    .history-item-time { color: #888; font-size: 12px; }
+    .history-item-stats { display: flex; gap: 16px; margin-top: 8px; }
+    .history-item-stats span { font-size: 12px; }
+  </style>
+</head>
+<body>
+  <!-- 导航 -->
+  <nav class="nav">
+    <h1>边缘侧日志管理系统</h1>
+    <div class="nav-tabs">
+      <button class="nav-tab active" data-tab="logs">日志列表</button>
+      <button class="nav-tab" data-tab="stream">实时流</button>
+      <button class="nav-tab" data-tab="analysis">日志分析</button>
+      <button class="nav-tab" data-tab="history">分析历史</button>
+    </div>
+  </nav>
+  
+  <main class="main">
+    <!-- 日志列表 -->
+    <div id="logs-tab" class="tab-content active">
+      <div class="stats-grid" id="stats-grid"></div>
+      
+      <div class="filters">
+        <div class="filter-group">
+          <label>级别:</label>
+          <select id="filter-level">
+            <option value="">全部</option>
+            <option value="trace">TRACE</option>
+            <option value="debug">DEBUG</option>
+            <option value="info">INFO</option>
+            <option value="warn">WARN</option>
+            <option value="error">ERROR</option>
+            <option value="fatal">FATAL</option>
+          </select>
+        </div>
+        <div class="filter-group">
+          <label>服务:</label>
+          <select id="filter-service"></select>
+        </div>
+        <div class="filter-group">
+          <label>节点:</label>
+          <select id="filter-node"></select>
+        </div>
+        <button class="analysis-btn primary" onclick="loadLogs()">刷新</button>
+      </div>
+      
+      <table class="log-table">
+        <thead>
+          <tr>
+            <th class="time">时间</th>
+            <th class="level">级别</th>
+            <th class="service">服务</th>
+            <th class="message">消息</th>
+            <th class="actions">操作</th>
+          </tr>
+        </thead>
+        <tbody id="log-tbody">
+          <tr><td colspan="5" class="loading"><div class="spinner"></div>加载中...</td></tr>
+        </tbody>
+      </table>
+      
+      <div class="pagination" id="pagination"></div>
+    </div>
+    
+    <!-- 实时流 -->
+    <div id="stream-tab" class="tab-content">
+      <div class="filters">
+        <button class="analysis-btn primary" id="stream-toggle" onclick="toggleStream()">开始监控</button>
+        <button class="analysis-btn secondary" onclick="clearStream()">清空</button>
+      </div>
+      <div class="stream-container" id="stream-container"></div>
+    </div>
+    
+    <!-- 日志分析 -->
+    <div id="analysis-tab" class="tab-content">
+      <div class="analysis-panel">
+        <div class="analysis-header">
+          <h2>日志分析</h2>
+          <div>
+            <button class="analysis-btn primary" onclick="runRulesAnalysis()">规则分析</button>
+            <button class="analysis-btn secondary" onclick="runLLMAnalysis()">大模型分析</button>
+          </div>
+        </div>
+        
+        <div class="stats-grid" id="analysis-stats"></div>
+        
+        <div class="match-list" id="match-list">
+          <p style="color:#888">点击"规则分析"或"大模型分析"开始分析日志</p>
+        </div>
+        
+        <div class="llm-result" id="llm-result" style="display:none"></div>
+      </div>
+    </div>
+    
+    <!-- 分析历史 -->
+    <div id="history-tab" class="tab-content">
+      <div class="analysis-panel">
+        <div class="analysis-header">
+          <h2>分析历史</h2>
+          <button class="analysis-btn primary" onclick="loadHistory()">刷新</button>
+        </div>
+        <div id="history-list"></div>
+      </div>
+    </div>
+  </main>
+  
+  <!-- 日志详情模态框 -->
+  <div class="modal" id="detail-modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2>日志详情</h2>
+        <button class="modal-close" onclick="closeModal()">&times;</button>
+      </div>
+      <div class="modal-body" id="modal-body"></div>
+    </div>
+  </div>
+  
+  <script>
+    const API = '/api';
+    let currentPage = 1;
+    let eventSource = null;
+    let isStreaming = false;
+    
+    // 页面加载
+    document.addEventListener('DOMContentLoaded', () => {
+      loadStats();
+      loadLogs();
+      loadFilters();
+      loadHistory();
+      
+      // 标签页切换
+      document.querySelectorAll('.nav-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+          document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+          document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+          tab.classList.add('active');
+          document.getElementById(`${tab.dataset.tab}-tab`).classList.add('active');
+        });
+      });
+      
+      // 过滤器变化
+      document.getElementById('filter-level').addEventListener('change', () => { currentPage = 1; loadLogs(); });
+      document.getElementById('filter-service').addEventListener('change', () => { currentPage = 1; loadLogs(); });
+      document.getElementById('filter-node').addEventListener('change', () => { currentPage = 1; loadLogs(); });
+    });
+    
+    // 加载统计
+    async function loadStats() {
+      const res = await fetch(`${API}/stats`);
+      const data = await res.json();
+      
+      document.getElementById('stats-grid').innerHTML = `
+        <div class="stat-card"><h3>总日志数</h3><div class="value">${data.total}</div></div>
+        <div class="stat-card error"><h3>错误</h3><div class="value">${data.levelCount.error || 0}</div></div>
+        <div class="stat-card warn"><h3>警告</h3><div class="value">${data.levelCount.warn || 0}</div></div>
+        <div class="stat-card info"><h3>信息</h3><div class="value">${data.levelCount.info || 0}</div></div>
+      `;
+    }
+    
+    // 加载过滤器选项
+    async function loadFilters() {
+      const res = await fetch(`${API}/logs?page=1&pageSize=100`);
+      const data = await res.json();
+      
+      const serviceSelect = document.getElementById('filter-service');
+      serviceSelect.innerHTML = '<option value="">全部服务</option>';
+      data.services.forEach(s => {
+        serviceSelect.innerHTML += `<option value="${s}">${s}</option>`;
+      });
+      
+      const nodeSelect = document.getElementById('filter-node');
+      nodeSelect.innerHTML = '<option value="">全部节点</option>';
+      data.nodes.forEach(n => {
+        nodeSelect.innerHTML += `<option value="${n}">${n}</option>`;
+      });
+    }
+    
+    // 加载日志列表
+    async function loadLogs() {
+      const level = document.getElementById('filter-level').value;
+      const service = document.getElementById('filter-service').value;
+      const node = document.getElementById('filter-node').value;
+      
+      const params = new URLSearchParams({ page: currentPage, pageSize: 50 });
+      if (level) params.append('level', level);
+      if (service) params.append('service', service);
+      if (node) params.append('node', node);
+      
+      const res = await fetch(`${API}/logs?${params}`);
+      const data = await res.json();
+      
+      const tbody = document.getElementById('log-tbody');
+      if (data.logs.length === 0) {
+        tbody.innerHTML = '<tr><td colspan="5" style="text-align:center;color:#888;padding:40px;">暂无日志</td></tr>';
+      } else {
+        tbody.innerHTML = data.logs.map(log => `
+          <tr onclick="showDetail(${escapeHtml(JSON.stringify(log))})" style="cursor:pointer">
+            <td class="time">${log.timeStr}</td>
+            <td class="level level-${log.levelStr.toUpperCase()}">${log.levelStr.toUpperCase()}</td>
+            <td class="service">${log.svc || '-'}</td>
+            <td class="message">${escapeHtml(log.msg || '')}</td>
+            <td class="actions"><button onclick="event.stopPropagation();showDetail(${escapeHtml(JSON.stringify(log))})">详情</button></td>
+          </tr>
+        `).join('');
+      }
+      
+      // 分页
+      const totalPages = Math.ceil(data.total / 50);
+      const pagination = document.getElementById('pagination');
+      pagination.innerHTML = `
+        <button ${currentPage === 1 ? 'disabled' : ''} onclick="goToPage(1)">首页</button>
+        <button ${currentPage === 1 ? 'disabled' : ''} onclick="goToPage(${currentPage - 1})">上一页</button>
+        <span style="padding:8px 16px">第 ${currentPage} / ${totalPages} 页</span>
+        <button ${currentPage >= totalPages ? 'disabled' : ''} onclick="goToPage(${currentPage + 1})">下一页</button>
+        <button ${currentPage >= totalPages ? 'disabled' : ''} onclick="goToPage(${totalPages})">末页</button>
+      `;
+    }
+    
+    function goToPage(page) {
+      currentPage = page;
+      loadLogs();
+    }
+    
+    // 显示详情
+    function showDetail(log) {
+      const modal = document.getElementById('detail-modal');
+      const body = document.getElementById('modal-body');
+      
+      const levelStr = log.levelStr || 'info';
+      const fields = log.fields || {};
+      
+      body.innerHTML = `
+        <div class="detail-row">
+          <div class="detail-label">时间:</div>
+          <div class="detail-value">${log.timeStr || '-'}</div>
+        </div>
+        <div class="detail-row">
+          <div class="detail-label">级别:</div>
+          <div class="detail-value level level-${levelStr.toUpperCase()}">${levelStr.toUpperCase()}</div>
+        </div>
+        <div class="detail-row">
+          <div class="detail-label">服务:</div>
+          <div class="detail-value">${log.svc || log.name || '-'}</div>
+        </div>
+        <div class="detail-row">
+          <div class="detail-label">节点:</div>
+          <div class="detail-value">${log.node || log.hostname || '-'}</div>
+        </div>
+        <div class="detail-row">
+          <div class="detail-label">消息:</div>
+          <div class="detail-value">${escapeHtml(log.msg || '-')}</div>
+        </div>
+        <div class="detail-row">
+          <div class="detail-label">字段:</div>
+          <div class="detail-value detail-json"><pre>${JSON.stringify(fields, null, 2)}</pre></div>
+        </div>
+        <div class="detail-row">
+          <div class="detail-label">原始日志:</div>
+          <div class="detail-value detail-json"><pre>${JSON.stringify(log, null, 2)}</pre></div>
+        </div>
+      `;
+      
+      modal.classList.add('active');
+    }
+    
+    function closeModal() {
+      document.getElementById('detail-modal').classList.remove('active');
+    }
+    
+    // 实时流
+    function toggleStream() {
+      const btn = document.getElementById('stream-toggle');
+      
+      if (isStreaming) {
+        if (eventSource) {
+          eventSource.close();
+          eventSource = null;
+        }
+        btn.textContent = '开始监控';
+        isStreaming = false;
+      } else {
+        eventSource = new EventSource(`${API}/logs/stream`);
+        const container = document.getElementById('stream-container');
+        
+        eventSource.onmessage = (e) => {
+          if (e.data === 'heartbeat') return;
+          
+          try {
+            const log = JSON.parse(e.data);
+            const levelStr = log.levelStr || 'info';
+            const div = document.createElement('div');
+            div.className = `stream-line ${levelStr.toUpperCase()}`;
+            div.innerHTML = `<span class="time">${log.timeStr || ''}</span><span class="level">[${levelStr.toUpperCase()}]</span>${escapeHtml(log.msg || '')}`;
+            container.appendChild(div);
+            container.scrollTop = container.scrollHeight;
+            
+            // 限制行数
+            while (container.children.length > 500) {
+              container.removeChild(container.firstChild);
+            }
+          } catch (err) {}
+        };
+        
+        btn.textContent = '停止监控';
+        isStreaming = true;
+      }
+    }
+    
+    function clearStream() {
+      document.getElementById('stream-container').innerHTML = '';
+    }
+    
+    // 规则分析
+    async function runRulesAnalysis() {
+      const matchList = document.getElementById('match-list');
+      matchList.innerHTML = '<div class="loading"><div class="spinner"></div>分析中...</div>';
+      
+      const res = await fetch(`${API}/analyze/rules`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ count: 50 })
+      });
+      const data = await res.json();
+      
+      // 统计
+      document.getElementById('analysis-stats').innerHTML = `
+        <div class="stat-card"><h3>分析日志数</h3><div class="value">${data.totalLogs}</div></div>
+        <div class="stat-card error"><h3>匹配规则数</h3><div class="value">${data.matchCount}</div></div>
+        <div class="stat-card warn"><h3>严重问题</h3><div class="value">${data.severityCount.critical || 0}</div></div>
+        <div class="stat-card info"><h3>需要LLM分析</h3><div class="value">${data.needsLLM}</div></div>
+      `;
+      
+      // 匹配列表
+      if (data.matches.length === 0) {
+        matchList.innerHTML = '<p style="color:#888">未匹配任何规则</p>';
+      } else {
+        matchList.innerHTML = data.matches.map(m => `
+          <div class="match-item ${m.rule.severity}">
+            <h4>[${m.rule.id}] ${m.rule.name}</h4>
+            <p>消息: ${escapeHtml(m.log.msg || '-')}</p>
+            <div class="suggestion">建议: ${m.suggestion}</div>
+          </div>
+        `).join('');
+      }
+      
+      // 隐藏LLM结果
+      document.getElementById('llm-result').style.display = 'none';
+    }
+    
+    // LLM分析
+    async function runLLMAnalysis() {
+      const matchList = document.getElementById('match-list');
+      const llmResult = document.getElementById('llm-result');
+      
+      matchList.innerHTML = '<div class="loading"><div class="spinner"></div>正在调用大模型分析，请稍候...</div>';
+      
+      const res = await fetch(`${API}/analyze/llm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ count: 20, model: 'qwen3.5:9b' })
+      });
+      const data = await res.json();
+      
+      matchList.innerHTML = '<p style="color:#888">大模型分析完成</p>';
+      
+      if (data.error) {
+        llmResult.innerHTML = `<h3>分析失败</h3><p>${data.error}</p>`;
+      } else {
+        llmResult.innerHTML = `<h3>大模型分析结果 (${data.model})</h3><div>${formatMarkdown(data.content)}</div>`;
+      }
+      llmResult.style.display = 'block';
+    }
+    
+    // 加载历史
+    async function loadHistory() {
+      const list = document.getElementById('history-list');
+      list.innerHTML = '<div class="loading"><div class="spinner"></div>加载中...</div>';
+      
+      const res = await fetch(`${API}/history`);
+      const data = await res.json();
+      
+      if (data.length === 0) {
+        list.innerHTML = '<p style="color:#888">暂无分析历史</p>';
+      } else {
+        list.innerHTML = data.map(h => `
+          <div class="history-item">
+            <div class="history-item-header">
+              <strong>分析 #${h.id}</strong>
+              <span class="history-item-time">${new Date(h.analysis_time).toLocaleString()}</span>
+            </div>
+            <div class="history-item-stats">
+              <span>日志数: ${h.log_count}</span>
+              <span>匹配数: ${h.match_count}</span>
+              <span>严重: ${h.severity_distribution?.critical || 0}</span>
+              <span>高: ${h.severity_distribution?.high || 0}</span>
+              <span>中: ${h.severity_distribution?.medium || 0}</span>
+            </div>
+          </div>
+        `).join('');
+      }
+    }
+    
+    // 工具函数
+    function escapeHtml(str) {
+      if (typeof str !== 'string') return String(str);
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    
+    function formatMarkdown(text) {
+      if (!text) return '';
+      return text
+        .replace(/## (.*)/g, '<h3>$1</h3>')
+        .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+        .replace(/\n/g, '<br>');
+    }
+    
+    // ESC 关闭模态框
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') closeModal();
+    });
+  </script>
+</body>
+</html>
