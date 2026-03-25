@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/redis/go-redis/v9"
@@ -20,6 +21,12 @@ const (
 	LevelWarn  = 40
 	LevelError = 50
 	LevelFatal = 60
+)
+
+// 重连配置
+const (
+	retryInterval = 1 * time.Minute // 重连间隔
+	pingTimeout   = 5 * time.Second // Ping 超时
 )
 
 // LogEntry 结构化日志条目 (兼容 Bunyan 格式)
@@ -37,17 +44,21 @@ type LogEntry struct {
 
 // SimpleLogger 极简日志器
 type SimpleLogger struct {
-	redis     *redis.Client
-	stream    string
-	nodeID    string
-	service   string
-	localFile *os.File
-	mu        sync.Mutex
-	redisDown bool // Redis 不可用时为 true
+	redis      *redis.Client
+	stream     string
+	nodeID     string
+	service    string
+	localFile  *os.File
+	mu         sync.Mutex
+	redisDown  int32  // 原子操作：1=Redis 不可用，0=可用
+	redisAddr  string // 保存 Redis 地址用于重连
+	closeChan  chan struct{}
+	wg         sync.WaitGroup
 }
 
 // NewSimpleLogger 创建日志器
 // Redis 连接失败时自动降级，仅使用本地文件日志
+// 每隔 1 分钟尝试重连 Redis，重连成功后恢复 Redis 存储
 func NewSimpleLogger(redisAddr, nodeID, service string) (*SimpleLogger, error) {
 	// 本地文件作为备份（跨平台）
 	logsDir := "logs"
@@ -65,18 +76,23 @@ func NewSimpleLogger(redisAddr, nodeID, service string) (*SimpleLogger, error) {
 		Addr:     redisAddr,
 		PoolSize: 5,
 	})
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+
+	ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
 	defer cancel()
 	if err := rdb.Ping(ctx).Err(); err != nil {
 		fmt.Fprintf(os.Stderr, "[WARN] Redis 连接失败 (%s)，仅使用本地文件日志：%v\n", redisAddr, err)
-		return &SimpleLogger{
+		logger := &SimpleLogger{
 			redis:     rdb,
 			stream:    "logs:stream",
 			nodeID:    nodeID,
 			service:   service,
 			localFile: f,
-			redisDown: true,
-		}, nil
+			redisDown: 1,
+			redisAddr: redisAddr,
+			closeChan: make(chan struct{}),
+		}
+		logger.startReconnect()
+		return logger, nil
 	}
 
 	return &SimpleLogger{
@@ -85,7 +101,39 @@ func NewSimpleLogger(redisAddr, nodeID, service string) (*SimpleLogger, error) {
 		nodeID:    nodeID,
 		service:   service,
 		localFile: f,
+		redisDown: 0,
+		redisAddr: redisAddr,
+		closeChan: make(chan struct{}),
 	}, nil
+}
+
+// startReconnect 启动后台重连 goroutine
+func (l *SimpleLogger) startReconnect() {
+	l.wg.Add(1)
+	go func() {
+		defer l.wg.Done()
+		ticker := time.NewTicker(retryInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				if atomic.LoadInt32(&l.redisDown) == 0 {
+					continue // 已连接，跳过
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), pingTimeout)
+				if err := l.redis.Ping(ctx).Err(); err == nil {
+					atomic.StoreInt32(&l.redisDown, 0)
+					fmt.Fprintf(os.Stderr, "[INFO] Redis 重连成功 (%s)，恢复 Redis 存储\n", l.redisAddr)
+				} else {
+					fmt.Fprintf(os.Stderr, "[WARN] Redis 重连失败 (%s): %v\n", l.redisAddr, err)
+				}
+				cancel()
+			case <-l.closeChan:
+				return
+			}
+		}
+	}()
 }
 
 // levelToBunyan 转换日志级别到 Bunyan 格式
@@ -125,7 +173,7 @@ func (l *SimpleLogger) Log(ctx context.Context, level, msg string, fields map[st
 	data, _ := json.Marshal(entry)
 
 	// 1. 写入 Redis (异步，失败不阻塞)
-	if !l.redisDown {
+	if atomic.LoadInt32(&l.redisDown) == 0 {
 		go func() {
 			l.redis.XAdd(ctx, &redis.XAddArgs{
 				Stream: l.stream,
@@ -165,6 +213,8 @@ func (l *SimpleLogger) Debug(ctx context.Context, msg string, fields map[string]
 
 // Close 关闭日志器
 func (l *SimpleLogger) Close() error {
+	close(l.closeChan)
+	l.wg.Wait()
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if l.localFile != nil {
